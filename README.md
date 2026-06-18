@@ -7,8 +7,10 @@ The first target is an HP ProCurve 2810-24G on `192.168.1.193`, but the service 
 ## What It Does
 
 - Shows switch identity, uptime, management service reachability, and HTTP title.
-- Renders a front-panel port map with live SNMP status when SNMP is configured.
-- Lists interface counters and VLAN names from standard MIBs where the switch exposes them.
+- Renders a front-panel port map in physical odd/even ProCurve order with live SNMP status when SNMP is configured.
+- Lists interface counters, errors, discards, MAC addresses, and physical-only filters from standard IF-MIB data.
+- Shows VLAN names, status, and egress/tagged/untagged port membership bitmaps where the switch exposes them.
+- Shows LLDP remote-device rows when LLDP data is enabled and exposed through SNMP.
 - Runs read commands over SSH or Telnet with credentials supplied per browser session.
 - Backs up `show running-config` through the same CLI transport.
 - Blocks write/config commands by default unless the service is deployed with `ALLOW_WRITE_COMMANDS=true`.
@@ -88,8 +90,13 @@ Built-in presets:
 show version
 show flash
 show interfaces brief
+show interfaces counters
 show vlans
 show trunks
+show mac-address
+show lldp info remote-device
+show spanning-tree
+show logging -r
 show running-config
 ```
 

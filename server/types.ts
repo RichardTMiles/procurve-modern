@@ -42,6 +42,10 @@ export type SwitchPort = {
   macAddress?: string;
   inOctets?: number;
   outOctets?: number;
+  inErrors?: number;
+  outErrors?: number;
+  inDiscards?: number;
+  outDiscards?: number;
   detectedVia: "snmp" | "fallback";
 };
 
@@ -49,6 +53,20 @@ export type VlanInfo = {
   id: number;
   name: string;
   status?: string;
+  taggedPorts?: number[];
+  untaggedPorts?: number[];
+  egressPorts?: number[];
+};
+
+export type SwitchNeighbor = {
+  key: string;
+  localPort?: number;
+  localPortName?: string;
+  systemName?: string;
+  portId?: string;
+  portDescription?: string;
+  chassisId?: string;
+  systemDescription?: string;
 };
 
 export type CliTransport = "ssh" | "telnet";

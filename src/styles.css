@@ -330,8 +330,10 @@ textarea {
 
 .port-grid {
   display: grid;
-  grid-template-columns: repeat(12, minmax(28px, 1fr));
+  grid-template-columns: repeat(var(--port-columns, 12), minmax(28px, 1fr));
+  grid-template-rows: repeat(2, minmax(48px, auto));
   gap: 8px;
+  min-width: 420px;
 }
 
 .port-jack {
@@ -373,6 +375,10 @@ textarea {
 
 .port-jack.testing .port-led {
   background: #f3a928;
+}
+
+.port-jack.issue {
+  border-color: var(--amber);
 }
 
 .sfp-block {
@@ -468,6 +474,13 @@ textarea {
   margin-bottom: 14px;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .section-heading h2 {
   margin: 0;
   font-size: 18px;
@@ -499,6 +512,57 @@ textarea {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.compact-field {
+  display: grid;
+  grid-template-columns: 18px minmax(150px, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #526174;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  min-height: 40px;
+}
+
+.compact-field input,
+.compact-field select {
+  border: 0;
+  padding: 0;
+  min-height: 24px;
+  background: transparent;
+}
+
+.compact-field input:focus,
+.compact-field select:focus {
+  outline: none;
+}
+
+.check-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #263647;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  min-height: 40px;
+  font-weight: 800;
+}
+
+.check-field input {
+  width: auto;
 }
 
 .preset-button,
@@ -559,6 +623,37 @@ td {
   padding: 10px 8px;
   text-align: left;
   font-size: 14px;
+}
+
+.bounded-cell {
+  max-width: 460px;
+  overflow-wrap: anywhere;
+}
+
+.chip-list {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.port-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #17324b;
+  background: #e7f1fa;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.muted-inline {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 th {
@@ -692,7 +787,7 @@ pre {
   }
 
   .port-grid {
-    grid-template-columns: repeat(8, minmax(28px, 1fr));
+    grid-template-columns: repeat(var(--port-columns, 12), minmax(28px, 1fr));
   }
 }
 
@@ -720,7 +815,8 @@ pre {
   }
 
   .port-grid {
-    grid-template-columns: repeat(4, minmax(34px, 1fr));
+    grid-template-columns: repeat(var(--port-columns, 12), minmax(34px, 1fr));
+    overflow-x: auto;
   }
 
   .service-row {

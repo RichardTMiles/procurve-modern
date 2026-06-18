@@ -1,5 +1,5 @@
 import * as snmp from "net-snmp";
-import type { ServiceConfig, SwitchPort, SystemInfo, VlanInfo } from "./types.js";
+import type { ServiceConfig, SwitchNeighbor, SwitchPort, SystemInfo, VlanInfo } from "./types.js";
 
 const SYSTEM_OIDS = {
   sysDescr: "1.3.6.1.2.1.1.1.0",
@@ -12,16 +12,31 @@ const SYSTEM_OIDS = {
 
 const IF_OIDS = {
   descr: "1.3.6.1.2.1.2.2.1.2",
+  physAddress: "1.3.6.1.2.1.2.2.1.6",
   speed: "1.3.6.1.2.1.2.2.1.5",
   adminStatus: "1.3.6.1.2.1.2.2.1.7",
   operStatus: "1.3.6.1.2.1.2.2.1.8",
   inOctets: "1.3.6.1.2.1.2.2.1.10",
+  inDiscards: "1.3.6.1.2.1.2.2.1.13",
+  inErrors: "1.3.6.1.2.1.2.2.1.14",
   outOctets: "1.3.6.1.2.1.2.2.1.16",
+  outDiscards: "1.3.6.1.2.1.2.2.1.19",
+  outErrors: "1.3.6.1.2.1.2.2.1.20",
   alias: "1.3.6.1.2.1.31.1.1.1.18"
 };
 
 const VLAN_NAME_OID = "1.3.6.1.2.1.17.7.1.4.3.1.1";
+const VLAN_EGRESS_PORTS_OID = "1.3.6.1.2.1.17.7.1.4.3.1.2";
+const VLAN_UNTAGGED_PORTS_OID = "1.3.6.1.2.1.17.7.1.4.3.1.4";
 const VLAN_STATUS_OID = "1.3.6.1.2.1.17.7.1.4.3.1.5";
+
+const LLDP_OIDS = {
+  chassisId: "1.0.8802.1.1.2.1.4.1.1.5",
+  portId: "1.0.8802.1.1.2.1.4.1.1.7",
+  portDescription: "1.0.8802.1.1.2.1.4.1.1.8",
+  systemName: "1.0.8802.1.1.2.1.4.1.1.9",
+  systemDescription: "1.0.8802.1.1.2.1.4.1.1.10"
+};
 
 type Varbind = {
   oid: string;
@@ -35,8 +50,8 @@ function createSession(config: ServiceConfig) {
 
   return snmp.createSession(config.switchHost, config.snmpCommunity, {
     version: snmp.Version2c,
-    timeout: 900,
-    retries: 0
+    timeout: 1500,
+    retries: 1
   });
 }
 
@@ -59,6 +74,14 @@ function valueToNumber(value: unknown) {
 
   const parsed = Number(valueToString(value));
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function valueToMac(value: unknown) {
+  if (!Buffer.isBuffer(value) || value.length === 0) {
+    return undefined;
+  }
+
+  return [...value].map((part) => part.toString(16).padStart(2, "0")).join(":");
 }
 
 function statusFromNumber(value: unknown): SwitchPort["operStatus"] {
@@ -141,6 +164,33 @@ function mapByIndex(rows: Varbind[], baseOid: string) {
   return map;
 }
 
+function decodePortBitmap(value: unknown) {
+  if (!Buffer.isBuffer(value)) {
+    return [];
+  }
+
+  const ports: number[] = [];
+  for (let byteIndex = 0; byteIndex < value.length; byteIndex += 1) {
+    const byte = value[byteIndex] ?? 0;
+    for (let bit = 0; bit < 8; bit += 1) {
+      if ((byte & (1 << (7 - bit))) !== 0) {
+        ports.push(byteIndex * 8 + bit + 1);
+      }
+    }
+  }
+
+  return ports;
+}
+
+function lldpKeyFromOid(oid: string, baseOid: string) {
+  return oid.startsWith(`${baseOid}.`) ? oid.slice(baseOid.length + 1) : undefined;
+}
+
+function lldpLocalPortFromKey(key: string) {
+  const parts = key.split(".").map(Number);
+  return Number.isFinite(parts[1]) ? parts[1] : undefined;
+}
+
 export async function getSystemInfo(config: ServiceConfig): Promise<Partial<SystemInfo>> {
   const session = createSession(config);
   if (!session) {
@@ -181,23 +231,31 @@ export async function getPorts(config: ServiceConfig): Promise<SwitchPort[]> {
   }
 
   try {
-    const [descrRows, aliasRows, speedRows, adminRows, operRows, inRows, outRows] = await Promise.all([
-      walk(session, IF_OIDS.descr),
-      walk(session, IF_OIDS.alias),
-      walk(session, IF_OIDS.speed),
-      walk(session, IF_OIDS.adminStatus),
-      walk(session, IF_OIDS.operStatus),
-      walk(session, IF_OIDS.inOctets),
-      walk(session, IF_OIDS.outOctets)
-    ]);
+    const descrRows = await walk(session, IF_OIDS.descr);
+    const aliasRows = await walk(session, IF_OIDS.alias);
+    const physRows = await walk(session, IF_OIDS.physAddress);
+    const speedRows = await walk(session, IF_OIDS.speed);
+    const adminRows = await walk(session, IF_OIDS.adminStatus);
+    const operRows = await walk(session, IF_OIDS.operStatus);
+    const inRows = await walk(session, IF_OIDS.inOctets);
+    const outRows = await walk(session, IF_OIDS.outOctets);
+    const inErrorRows = await walk(session, IF_OIDS.inErrors);
+    const outErrorRows = await walk(session, IF_OIDS.outErrors);
+    const inDiscardRows = await walk(session, IF_OIDS.inDiscards);
+    const outDiscardRows = await walk(session, IF_OIDS.outDiscards);
 
     const descr = mapByIndex(descrRows, IF_OIDS.descr);
     const alias = mapByIndex(aliasRows, IF_OIDS.alias);
+    const physAddress = mapByIndex(physRows, IF_OIDS.physAddress);
     const speed = mapByIndex(speedRows, IF_OIDS.speed);
     const admin = mapByIndex(adminRows, IF_OIDS.adminStatus);
     const oper = mapByIndex(operRows, IF_OIDS.operStatus);
     const inOctets = mapByIndex(inRows, IF_OIDS.inOctets);
     const outOctets = mapByIndex(outRows, IF_OIDS.outOctets);
+    const inErrors = mapByIndex(inErrorRows, IF_OIDS.inErrors);
+    const outErrors = mapByIndex(outErrorRows, IF_OIDS.outErrors);
+    const inDiscards = mapByIndex(inDiscardRows, IF_OIDS.inDiscards);
+    const outDiscards = mapByIndex(outDiscardRows, IF_OIDS.outDiscards);
     const indexes = [...descr.keys()].sort((a, b) => a - b);
 
     if (indexes.length === 0) {
@@ -211,8 +269,13 @@ export async function getPorts(config: ServiceConfig): Promise<SwitchPort[]> {
       adminStatus: statusFromNumber(admin.get(index)),
       operStatus: statusFromNumber(oper.get(index)),
       speedMbps: Math.round((valueToNumber(speed.get(index)) ?? 0) / 1_000_000) || undefined,
+      macAddress: valueToMac(physAddress.get(index)),
       inOctets: valueToNumber(inOctets.get(index)),
       outOctets: valueToNumber(outOctets.get(index)),
+      inErrors: valueToNumber(inErrors.get(index)),
+      outErrors: valueToNumber(outErrors.get(index)),
+      inDiscards: valueToNumber(inDiscards.get(index)),
+      outDiscards: valueToNumber(outDiscards.get(index)),
       detectedVia: "snmp"
     }));
   } finally {
@@ -227,8 +290,13 @@ export async function getVlans(config: ServiceConfig): Promise<VlanInfo[]> {
   }
 
   try {
-    const [names, statuses] = await Promise.all([walk(session, VLAN_NAME_OID), walk(session, VLAN_STATUS_OID)]);
+    const names = await walk(session, VLAN_NAME_OID);
+    const statuses = await walk(session, VLAN_STATUS_OID);
+    const egressRows = await walk(session, VLAN_EGRESS_PORTS_OID);
+    const untaggedRows = await walk(session, VLAN_UNTAGGED_PORTS_OID);
     const statusById = mapByIndex(statuses, VLAN_STATUS_OID);
+    const egressById = mapByIndex(egressRows, VLAN_EGRESS_PORTS_OID);
+    const untaggedById = mapByIndex(untaggedRows, VLAN_UNTAGGED_PORTS_OID);
 
     const rows: VlanInfo[] = [];
 
@@ -239,10 +307,17 @@ export async function getVlans(config: ServiceConfig): Promise<VlanInfo[]> {
       }
 
       const status = vlanStatus(valueToNumber(statusById.get(id)));
+      const egressPorts = decodePortBitmap(egressById.get(id));
+      const untaggedPorts = decodePortBitmap(untaggedById.get(id));
+      const untaggedSet = new Set(untaggedPorts);
+      const taggedPorts = egressPorts.filter((port) => !untaggedSet.has(port));
       rows.push({
         id,
         name: valueToString(row.value) || `VLAN ${id}`,
-        ...(status ? { status } : {})
+        ...(status ? { status } : {}),
+        ...(egressPorts.length ? { egressPorts } : {}),
+        ...(taggedPorts.length ? { taggedPorts } : {}),
+        ...(untaggedPorts.length ? { untaggedPorts } : {})
       });
     }
 
@@ -252,14 +327,97 @@ export async function getVlans(config: ServiceConfig): Promise<VlanInfo[]> {
   }
 }
 
+export async function getNeighbors(config: ServiceConfig): Promise<SwitchNeighbor[]> {
+  const session = createSession(config);
+  if (!session) {
+    return [];
+  }
+
+  try {
+    const ports = await getPorts(config);
+    const chassisIds = await walk(session, LLDP_OIDS.chassisId);
+    const portIds = await walk(session, LLDP_OIDS.portId);
+    const portDescriptions = await walk(session, LLDP_OIDS.portDescription);
+    const systemNames = await walk(session, LLDP_OIDS.systemName);
+    const systemDescriptions = await walk(session, LLDP_OIDS.systemDescription);
+    const localPortsByIndex = new Map(ports.map((port) => [port.index, port.name]));
+    const neighbors = new Map<string, SwitchNeighbor>();
+
+    const getOrCreate = (baseOid: string, oid: string) => {
+      const key = lldpKeyFromOid(oid, baseOid);
+      if (!key) {
+        return undefined;
+      }
+
+      const localPort = lldpLocalPortFromKey(key);
+      const existing = neighbors.get(key);
+      if (existing) {
+        return existing;
+      }
+
+      const neighbor: SwitchNeighbor = {
+        key,
+        ...(localPort ? { localPort, localPortName: localPortsByIndex.get(localPort) } : {})
+      };
+      neighbors.set(key, neighbor);
+      return neighbor;
+    };
+
+    for (const row of chassisIds) {
+      const neighbor = getOrCreate(LLDP_OIDS.chassisId, row.oid);
+      if (neighbor) {
+        neighbor.chassisId = valueToMac(row.value) || valueToString(row.value);
+      }
+    }
+
+    for (const row of portIds) {
+      const neighbor = getOrCreate(LLDP_OIDS.portId, row.oid);
+      if (neighbor) {
+        neighbor.portId = valueToString(row.value);
+      }
+    }
+
+    for (const row of portDescriptions) {
+      const neighbor = getOrCreate(LLDP_OIDS.portDescription, row.oid);
+      if (neighbor) {
+        neighbor.portDescription = valueToString(row.value);
+      }
+    }
+
+    for (const row of systemNames) {
+      const neighbor = getOrCreate(LLDP_OIDS.systemName, row.oid);
+      if (neighbor) {
+        neighbor.systemName = valueToString(row.value);
+      }
+    }
+
+    for (const row of systemDescriptions) {
+      const neighbor = getOrCreate(LLDP_OIDS.systemDescription, row.oid);
+      if (neighbor) {
+        neighbor.systemDescription = valueToString(row.value);
+      }
+    }
+
+    return [...neighbors.values()].sort((a, b) => (a.localPort ?? 0) - (b.localPort ?? 0));
+  } finally {
+    session.close();
+  }
+}
+
 function vlanStatus(value: number | undefined) {
   switch (value) {
     case 1:
-      return "other";
+      return "active";
     case 2:
-      return "permanent";
+      return "not in service";
     case 3:
-      return "dynamic";
+      return "not ready";
+    case 4:
+      return "create and go";
+    case 5:
+      return "create and wait";
+    case 6:
+      return "destroy";
     default:
       return undefined;
   }

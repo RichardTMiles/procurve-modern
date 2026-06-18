@@ -1,4 +1,4 @@
-import type { CliResult, Credentials, SwitchPort, SystemInfo, VlanInfo } from "./types";
+import type { CliResult, Credentials, SwitchNeighbor, SwitchPort, SystemInfo, VlanInfo } from "./types";
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -27,6 +27,10 @@ export function fetchPorts() {
 
 export function fetchVlans() {
   return api<VlanInfo[]>("/api/switch/vlans");
+}
+
+export function fetchNeighbors() {
+  return api<SwitchNeighbor[]>("/api/switch/neighbors");
 }
 
 export function runCommands(credentials: Credentials, commands: string[]) {
