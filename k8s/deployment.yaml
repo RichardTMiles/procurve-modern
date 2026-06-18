@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procurve-modern
+  namespace: procurve-modern
+  labels:
+    app.kubernetes.io/name: procurve-modern
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: procurve-modern
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: procurve-modern
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/richardtmiles/procurve-modern:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PORT
+              value: "3000"
+            - name: SWITCH_HOST
+              value: "192.168.1.193"
+            - name: SWITCH_LABEL
+              value: "HP ProCurve 2810-24G"
+            - name: ALLOW_WRITE_COMMANDS
+              value: "false"
+            - name: SNMP_COMMUNITY
+              valueFrom:
+                secretKeyRef:
+                  name: procurve-modern-secrets
+                  key: snmp-community
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 4
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
