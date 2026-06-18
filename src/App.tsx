@@ -356,6 +356,43 @@ function hasPortIssues(port: SwitchPort) {
   return Boolean((port.inErrors ?? 0) + (port.outErrors ?? 0) + (port.inDiscards ?? 0) + (port.outDiscards ?? 0));
 }
 
+function speedProfileForPort(port: SwitchPort) {
+  const deviceMbps = port.maxSpeedMbps ?? port.speedMbps;
+  const negotiatedMbps = port.operStatus === "up" ? port.speedMbps : undefined;
+  const cableFloorMbps = negotiatedMbps;
+  const cableIsLineRate = Boolean(deviceMbps && cableFloorMbps && cableFloorMbps >= deviceMbps);
+
+  return {
+    deviceLabel: formatLineRate(deviceMbps),
+    deviceShort: formatCompactSpeed(deviceMbps),
+    cableLabel: cableFloorMbps ? `>= ${formatLineRate(cableFloorMbps)}` : "Unknown",
+    cableShort: cableFloorMbps ? `>=${formatCompactSpeed(cableFloorMbps)}` : "?",
+    negotiatedLabel: negotiatedMbps ? formatLineRate(negotiatedMbps) : port.operStatus === "up" ? "Unknown" : "No link",
+    negotiatedShort: negotiatedMbps ? formatCompactSpeed(negotiatedMbps) : port.operStatus === "up" ? "?" : "--",
+    note: cableFloorMbps
+      ? cableIsLineRate
+        ? "Cord path is proven to carry the port's hardware line rate by the current negotiation."
+        : "Cord value is a proven floor from negotiation; peer device, config, or cable quality may be the limiter."
+      : "No active link, so cord capability cannot be measured from SNMP."
+  };
+}
+
+function formatCompactSpeed(speedMbps: number | undefined) {
+  if (speedMbps == null) {
+    return "?";
+  }
+
+  if (speedMbps >= 1000) {
+    return `${formatCompactNumber(speedMbps / 1000)}G`;
+  }
+
+  return `${formatCompactNumber(speedMbps)}M`;
+}
+
+function formatCompactNumber(value: number) {
+  return value >= 10 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+}
+
 function PortMap({
   ports,
   portRates,
@@ -380,6 +417,8 @@ function PortMap({
         }));
   const gridColumns = Math.max(12, Math.ceil(Math.max(...visiblePorts.map((port) => port.index)) / 2));
   const gridStyle: CSSProperties & { "--port-columns": string } = { "--port-columns": String(gridColumns) };
+  const selectedPortRow = visiblePorts.find((port) => port.index === selectedPort) ?? visiblePorts[0];
+  const selectedSpeedProfile = speedProfileForPort(selectedPortRow);
 
   return (
     <div className="front-panel">
@@ -392,6 +431,7 @@ function PortMap({
       <div className="port-grid" style={gridStyle}>
         {visiblePorts.map((port) => {
           const rate = portRates[port.index];
+          const speedProfile = speedProfileForPort(port);
           const portStyle: CSSProperties = {
             gridColumn: Math.ceil(port.index / 2),
             gridRow: port.index % 2 === 1 ? 1 : 2
@@ -403,11 +443,25 @@ function PortMap({
               key={port.index}
               onClick={() => onSelect(port.index)}
               style={portStyle}
-              title={`${port.name}: ${port.operStatus}${rate ? `, ${formatRate(rate.totalBytesPerSecond)} total` : ""}, ${formatLineRate(port.maxSpeedMbps)} line max`}
+              title={`${port.name}: ${port.operStatus}${rate ? `, ${formatRate(rate.totalBytesPerSecond)} total` : ""}. Device max ${speedProfile.deviceLabel}. Cord ${speedProfile.cableLabel}. Negotiated ${speedProfile.negotiatedLabel}.`}
               type="button"
             >
               <span className="port-led" />
-              <span>{port.index}</span>
+              <span className="port-number">{port.index}</span>
+              <span className="port-speed-stack" aria-hidden="true">
+                <span>
+                  <b>D</b>
+                  {speedProfile.deviceShort}
+                </span>
+                <span>
+                  <b>C</b>
+                  {speedProfile.cableShort}
+                </span>
+                <span>
+                  <b>N</b>
+                  {speedProfile.negotiatedShort}
+                </span>
+              </span>
             </button>
           );
         })}
@@ -419,6 +473,27 @@ function PortMap({
         <span className="sfp-slot" />
         <span className="sfp-slot" />
       </div>
+      {selectedPortRow ? (
+        <div className="port-speed-detail">
+          <div>
+            <span>Selected</span>
+            <strong>Port {selectedPortRow.index}</strong>
+          </div>
+          <div>
+            <span>Device max</span>
+            <strong>{selectedSpeedProfile.deviceLabel}</strong>
+          </div>
+          <div>
+            <span>Cord proven</span>
+            <strong>{selectedSpeedProfile.cableLabel}</strong>
+          </div>
+          <div>
+            <span>Negotiated</span>
+            <strong>{selectedSpeedProfile.negotiatedLabel}</strong>
+          </div>
+          <p>{selectedSpeedProfile.note}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -531,6 +606,7 @@ function PortsView({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "up" | "down" | "issues">("all");
   const [physicalOnly, setPhysicalOnly] = useState(true);
+  const selectedSpeedProfile = selectedPort ? speedProfileForPort(selectedPort) : undefined;
   const filteredPorts = ports.filter((port) => {
     if (physicalOnly && !isPhysicalPort(port)) {
       return false;
@@ -648,8 +724,16 @@ function PortsView({
               <dd>{selectedPort.macAddress || "None"}</dd>
             </div>
             <div>
-              <dt>Line Max</dt>
-              <dd>{formatLineRate(selectedPort.maxSpeedMbps)}</dd>
+              <dt>Device Max</dt>
+              <dd>{selectedSpeedProfile?.deviceLabel}</dd>
+            </div>
+            <div>
+              <dt>Cord Proven</dt>
+              <dd>{selectedSpeedProfile?.cableLabel}</dd>
+            </div>
+            <div>
+              <dt>Negotiated</dt>
+              <dd>{selectedSpeedProfile?.negotiatedLabel}</dd>
             </div>
             <div>
               <dt>Duplex Max</dt>
