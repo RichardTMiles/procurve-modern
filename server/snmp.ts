@@ -1,5 +1,5 @@
 import * as snmp from "net-snmp";
-import type { ServiceConfig, SwitchNeighbor, SwitchPort, SystemInfo, VlanInfo } from "./types.js";
+import type { ServiceConfig, SwitchMacEntry, SwitchNeighbor, SwitchPort, SystemInfo, VlanInfo } from "./types.js";
 
 const SYSTEM_OIDS = {
   sysDescr: "1.3.6.1.2.1.1.1.0",
@@ -36,6 +36,13 @@ const LLDP_OIDS = {
   portDescription: "1.0.8802.1.1.2.1.4.1.1.8",
   systemName: "1.0.8802.1.1.2.1.4.1.1.9",
   systemDescription: "1.0.8802.1.1.2.1.4.1.1.10"
+};
+
+const BRIDGE_OIDS = {
+  basePortIfIndex: "1.3.6.1.2.1.17.1.4.1.2",
+  fdbAddress: "1.3.6.1.2.1.17.4.3.1.1",
+  fdbPort: "1.3.6.1.2.1.17.4.3.1.2",
+  fdbStatus: "1.3.6.1.2.1.17.4.3.1.3"
 };
 
 type Varbind = {
@@ -191,6 +198,62 @@ function lldpLocalPortFromKey(key: string) {
   return Number.isFinite(parts[1]) ? parts[1] : undefined;
 }
 
+function suffixFromOid(oid: string, baseOid: string) {
+  return oid.startsWith(`${baseOid}.`) ? oid.slice(baseOid.length + 1) : undefined;
+}
+
+function mapBySuffix(rows: Varbind[], baseOid: string) {
+  const map = new Map<string, unknown>();
+
+  for (const row of rows) {
+    const suffix = suffixFromOid(row.oid, baseOid);
+    if (suffix) {
+      map.set(suffix, row.value);
+    }
+  }
+
+  return map;
+}
+
+function macFromOidSuffix(suffix: string | undefined) {
+  if (!suffix) {
+    return undefined;
+  }
+
+  const octets = suffix.split(".").map(Number);
+  if (octets.length !== 6 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return undefined;
+  }
+
+  return octets.map((octet) => octet.toString(16).padStart(2, "0")).join(":");
+}
+
+function fdbStatus(value: number | undefined) {
+  switch (value) {
+    case 1:
+      return "other";
+    case 2:
+      return "invalid";
+    case 3:
+      return "learned";
+    case 4:
+      return "self";
+    case 5:
+      return "management";
+    default:
+      return undefined;
+  }
+}
+
+function maxSpeedMbpsForPort(config: ServiceConfig, index: number, name: string, speedMbps: number | undefined) {
+  const modelHint = `${config.switchLabel}`.toLowerCase();
+  if (modelHint.includes("2810-24g") && index >= 1 && index <= 24 && /^\d+$/.test(name)) {
+    return 1000;
+  }
+
+  return speedMbps;
+}
+
 export async function getSystemInfo(config: ServiceConfig): Promise<Partial<SystemInfo>> {
   const session = createSession(config);
   if (!session) {
@@ -262,22 +325,28 @@ export async function getPorts(config: ServiceConfig): Promise<SwitchPort[]> {
       return fallbackPorts();
     }
 
-    return indexes.map((index) => ({
-      index,
-      name: valueToString(descr.get(index)) || `Port ${index}`,
-      alias: valueToString(alias.get(index)) || undefined,
-      adminStatus: statusFromNumber(admin.get(index)),
-      operStatus: statusFromNumber(oper.get(index)),
-      speedMbps: Math.round((valueToNumber(speed.get(index)) ?? 0) / 1_000_000) || undefined,
-      macAddress: valueToMac(physAddress.get(index)),
-      inOctets: valueToNumber(inOctets.get(index)),
-      outOctets: valueToNumber(outOctets.get(index)),
-      inErrors: valueToNumber(inErrors.get(index)),
-      outErrors: valueToNumber(outErrors.get(index)),
-      inDiscards: valueToNumber(inDiscards.get(index)),
-      outDiscards: valueToNumber(outDiscards.get(index)),
-      detectedVia: "snmp"
-    }));
+    return indexes.map((index) => {
+      const name = valueToString(descr.get(index)) || `Port ${index}`;
+      const speedMbps = Math.round((valueToNumber(speed.get(index)) ?? 0) / 1_000_000) || undefined;
+
+      return {
+        index,
+        name,
+        alias: valueToString(alias.get(index)) || undefined,
+        adminStatus: statusFromNumber(admin.get(index)),
+        operStatus: statusFromNumber(oper.get(index)),
+        speedMbps,
+        maxSpeedMbps: maxSpeedMbpsForPort(config, index, name, speedMbps),
+        macAddress: valueToMac(physAddress.get(index)),
+        inOctets: valueToNumber(inOctets.get(index)),
+        outOctets: valueToNumber(outOctets.get(index)),
+        inErrors: valueToNumber(inErrors.get(index)),
+        outErrors: valueToNumber(outErrors.get(index)),
+        inDiscards: valueToNumber(inDiscards.get(index)),
+        outDiscards: valueToNumber(outDiscards.get(index)),
+        detectedVia: "snmp" as const
+      };
+    });
   } finally {
     session.close();
   }
@@ -334,13 +403,11 @@ export async function getNeighbors(config: ServiceConfig): Promise<SwitchNeighbo
   }
 
   try {
-    const ports = await getPorts(config);
     const chassisIds = await walk(session, LLDP_OIDS.chassisId);
     const portIds = await walk(session, LLDP_OIDS.portId);
     const portDescriptions = await walk(session, LLDP_OIDS.portDescription);
     const systemNames = await walk(session, LLDP_OIDS.systemName);
     const systemDescriptions = await walk(session, LLDP_OIDS.systemDescription);
-    const localPortsByIndex = new Map(ports.map((port) => [port.index, port.name]));
     const neighbors = new Map<string, SwitchNeighbor>();
 
     const getOrCreate = (baseOid: string, oid: string) => {
@@ -357,7 +424,7 @@ export async function getNeighbors(config: ServiceConfig): Promise<SwitchNeighbo
 
       const neighbor: SwitchNeighbor = {
         key,
-        ...(localPort ? { localPort, localPortName: localPortsByIndex.get(localPort) } : {})
+        ...(localPort ? { localPort, localPortName: String(localPort) } : {})
       };
       neighbors.set(key, neighbor);
       return neighbor;
@@ -404,6 +471,47 @@ export async function getNeighbors(config: ServiceConfig): Promise<SwitchNeighbo
   }
 }
 
+export async function getMacTable(config: ServiceConfig): Promise<SwitchMacEntry[]> {
+  const session = createSession(config);
+  if (!session) {
+    return [];
+  }
+
+  try {
+    const basePortRows = await walk(session, BRIDGE_OIDS.basePortIfIndex);
+    const addressRows = await walk(session, BRIDGE_OIDS.fdbAddress);
+    const fdbPortRows = await walk(session, BRIDGE_OIDS.fdbPort);
+    const statusRows = await walk(session, BRIDGE_OIDS.fdbStatus);
+    const bridgePortToIfIndex = mapByIndex(basePortRows, BRIDGE_OIDS.basePortIfIndex);
+    const fdbPortByMac = mapBySuffix(fdbPortRows, BRIDGE_OIDS.fdbPort);
+    const statusByMac = mapBySuffix(statusRows, BRIDGE_OIDS.fdbStatus);
+    const entries: SwitchMacEntry[] = [];
+
+    for (const row of addressRows) {
+      const suffix = suffixFromOid(row.oid, BRIDGE_OIDS.fdbAddress);
+      const macAddress = valueToMac(row.value) || macFromOidSuffix(suffix);
+      if (!macAddress || !suffix) {
+        continue;
+      }
+
+      const bridgePort = valueToNumber(fdbPortByMac.get(suffix));
+      const resolvedPortIndex = bridgePort == null ? undefined : valueToNumber(bridgePortToIfIndex.get(bridgePort)) ?? bridgePort;
+      const portIndex = resolvedPortIndex != null && resolvedPortIndex > 0 ? resolvedPortIndex : undefined;
+      const status = fdbStatus(valueToNumber(statusByMac.get(suffix)));
+      entries.push({
+        macAddress,
+        ...(portIndex != null ? { portIndex, portName: String(portIndex) } : {}),
+        ...(bridgePort != null ? { bridgePort } : {}),
+        ...(status ? { status } : {})
+      });
+    }
+
+    return entries.sort((a, b) => (a.portIndex ?? 0) - (b.portIndex ?? 0) || a.macAddress.localeCompare(b.macAddress));
+  } finally {
+    session.close();
+  }
+}
+
 function vlanStatus(value: number | undefined) {
   switch (value) {
     case 1:
@@ -429,6 +537,7 @@ function fallbackPorts(): SwitchPort[] {
     name: `${index + 1}`,
     adminStatus: "unknown",
     operStatus: "unknown",
+    maxSpeedMbps: 1000,
     detectedVia: "fallback"
   }));
 }

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { runCli } from "./cli.js";
 import { loadConfig } from "./env.js";
 import { fetchHttpTitle, probeManagementPorts } from "./probe.js";
-import { getNeighbors, getPorts, getSystemInfo, getVlans } from "./snmp.js";
+import { getMacTable, getNeighbors, getPorts, getSystemInfo, getVlans } from "./snmp.js";
 import type { CliRequest, SystemInfo } from "./types.js";
 
 const config = loadConfig();
@@ -76,6 +76,14 @@ app.get("/api/switch/vlans", async (_request, response, next) => {
 app.get("/api/switch/neighbors", async (_request, response, next) => {
   try {
     response.json(await getNeighbors(config));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/switch/mac-table", async (_request, response, next) => {
+  try {
+    response.json(await getMacTable(config));
   } catch (error) {
     next(error);
   }

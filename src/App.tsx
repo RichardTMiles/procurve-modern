@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
+  Eye,
   FileDown,
   Gauge,
   GitBranch,
@@ -19,13 +20,23 @@ import {
   Router,
   Search,
   ShieldAlert,
-  TimerReset,
   TerminalSquare
 } from "lucide-react";
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { backupConfig, fetchNeighbors, fetchPorts, fetchSystemInfo, fetchVlans, runCommands } from "./api";
-import type { CliResult, Credentials, SwitchNeighbor, SwitchPort, SystemInfo, VlanInfo } from "./types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { backupConfig, fetchMacTable, fetchNeighbors, fetchPorts, fetchSystemInfo, fetchVlans, runCommands } from "./api";
+import { TrafficView } from "./TrafficView";
+import {
+  calculatePortRates,
+  formatDuplexRate,
+  formatLineRate,
+  formatPercent,
+  formatRate,
+  sumPortRates,
+  type PortRateMap,
+  type PortRateSample
+} from "./traffic";
+import type { CliResult, Credentials, SwitchMacEntry, SwitchNeighbor, SwitchPort, SystemInfo, VlanInfo } from "./types";
 
 const PRESETS = [
   { label: "Version", commands: ["show version"] },
@@ -42,10 +53,13 @@ const PRESETS = [
   { label: "Running Config", commands: ["show running-config"] }
 ];
 
-type View = "dashboard" | "ports" | "vlans" | "neighbors" | "config" | "console";
+const PORT_RATE_REFRESH_MS = 10_000;
+
+type View = "dashboard" | "traffic" | "ports" | "vlans" | "neighbors" | "config" | "console";
 
 const NAV_ITEMS: Array<{ id: View; label: string; icon: typeof Router }> = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
+  { id: "traffic", label: "Traffic", icon: Eye },
   { id: "ports", label: "Ports", icon: Cable },
   { id: "vlans", label: "VLANs", icon: Network },
   { id: "neighbors", label: "Neighbors", icon: GitBranch },
@@ -59,6 +73,8 @@ export function App() {
   const [ports, setPorts] = useState<SwitchPort[]>([]);
   const [vlans, setVlans] = useState<VlanInfo[]>([]);
   const [neighbors, setNeighbors] = useState<SwitchNeighbor[]>([]);
+  const [macEntries, setMacEntries] = useState<SwitchMacEntry[]>([]);
+  const [portRates, setPortRates] = useState<PortRateMap>({});
   const [selectedPort, setSelectedPort] = useState<number>();
   const [credentials, setCredentials] = useState<Credentials>({ transport: "telnet", username: "", password: "" });
   const [customCommands, setCustomCommands] = useState("show version");
@@ -67,23 +83,45 @@ export function App() {
   const [lastUpdated, setLastUpdated] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const portSamples = useRef<Map<number, PortRateSample>>(new Map());
+
+  const applyPortRows = useCallback((portRows: SwitchPort[]) => {
+    const timestamp = Date.now();
+    const rates = calculatePortRates(portSamples.current, portRows, timestamp);
+    portSamples.current = new Map(
+      portRows.map((port) => [
+        port.index,
+        {
+          timestamp,
+          inOctets: port.inOctets,
+          outOctets: port.outOctets
+        }
+      ])
+    );
+    setPorts(portRows);
+    setPortRates(rates);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(undefined);
 
     try {
-      const [systemInfo, portRows, vlanRows, neighborRows] = await Promise.all([
+      const [systemInfo, portRows] = await Promise.all([
         fetchSystemInfo(),
-        fetchPorts(),
-        fetchVlans(),
-        fetchNeighbors()
+        fetchPorts()
+      ]);
+      const [vlanRows, neighborRows, macRows] = await Promise.all([
+        fetchVlans().catch(() => [] as VlanInfo[]),
+        fetchNeighbors().catch(() => [] as SwitchNeighbor[]),
+        fetchMacTable().catch(() => [] as SwitchMacEntry[])
       ]);
       const firstPhysicalPort = portRows.find(isPhysicalPort) ?? portRows[0];
       setSystem(systemInfo);
-      setPorts(portRows);
+      applyPortRows(portRows);
       setVlans(vlanRows);
       setNeighbors(neighborRows);
+      setMacEntries(macRows);
       setSelectedPort((current) => current ?? firstPhysicalPort?.index);
       setLastUpdated(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     } catch (loadError) {
@@ -91,7 +129,16 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyPortRows]);
+
+  const refreshPortRows = useCallback(async () => {
+    try {
+      applyPortRows(await fetchPorts());
+      setLastUpdated(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to refresh port counters");
+    }
+  }, [applyPortRows]);
 
   useEffect(() => {
     void load();
@@ -103,11 +150,11 @@ export function App() {
     }
 
     const interval = window.setInterval(() => {
-      void load();
-    }, 30_000);
+      void refreshPortRows();
+    }, PORT_RATE_REFRESH_MS);
 
     return () => window.clearInterval(interval);
-  }, [autoRefresh, load]);
+  }, [autoRefresh, refreshPortRows]);
 
   const selectedPortRow = useMemo(
     () => ports.find((port) => port.index === selectedPort) ?? ports[0],
@@ -269,13 +316,16 @@ export function App() {
               <span>{openServices.length} services</span>
             </div>
           </div>
-          <PortMap ports={physicalPorts} selectedPort={selectedPortRow?.index} onSelect={setSelectedPort} />
+          <PortMap ports={physicalPorts} portRates={portRates} selectedPort={selectedPortRow?.index} onSelect={setSelectedPort} />
         </section>
 
         {view === "dashboard" ? (
-          <Dashboard system={system} ports={physicalPorts} vlans={vlans} neighbors={neighbors} onRunPreset={runPreset} />
+          <Dashboard system={system} ports={physicalPorts} portRates={portRates} vlans={vlans} neighbors={neighbors} onRunPreset={runPreset} />
         ) : null}
-        {view === "ports" ? <PortsView ports={ports} selectedPort={selectedPortRow} onSelect={setSelectedPort} /> : null}
+        {view === "traffic" ? (
+          <TrafficView macEntries={macEntries} ports={physicalPorts} portRates={portRates} onRunPreset={runPreset} />
+        ) : null}
+        {view === "ports" ? <PortsView ports={ports} portRates={portRates} selectedPort={selectedPortRow} onSelect={setSelectedPort} /> : null}
         {view === "vlans" ? <VlansView vlans={vlans} /> : null}
         {view === "neighbors" ? <NeighborsView neighbors={neighbors} onRunPreset={runPreset} /> : null}
         {view === "config" ? <ConfigView loading={loading} result={result} onBackup={runBackup} onRunPreset={runPreset} /> : null}
@@ -308,10 +358,12 @@ function hasPortIssues(port: SwitchPort) {
 
 function PortMap({
   ports,
+  portRates,
   selectedPort,
   onSelect
 }: {
   ports: SwitchPort[];
+  portRates: PortRateMap;
   selectedPort?: number;
   onSelect: (index: number) => void;
 }) {
@@ -323,6 +375,7 @@ function PortMap({
           name: `${index + 1}`,
           adminStatus: "unknown" as const,
           operStatus: "unknown" as const,
+          maxSpeedMbps: 1000,
           detectedVia: "fallback" as const
         }));
   const gridColumns = Math.max(12, Math.ceil(Math.max(...visiblePorts.map((port) => port.index)) / 2));
@@ -338,6 +391,7 @@ function PortMap({
       </div>
       <div className="port-grid" style={gridStyle}>
         {visiblePorts.map((port) => {
+          const rate = portRates[port.index];
           const portStyle: CSSProperties = {
             gridColumn: Math.ceil(port.index / 2),
             gridRow: port.index % 2 === 1 ? 1 : 2
@@ -345,11 +399,11 @@ function PortMap({
 
           return (
             <button
-              className={`port-jack ${port.operStatus} ${hasPortIssues(port) ? "issue" : ""} ${selectedPort === port.index ? "selected" : ""}`}
+              className={`port-jack ${port.operStatus} ${(rate?.totalBytesPerSecond ?? 0) > 0 ? "active-rate" : ""} ${hasPortIssues(port) ? "issue" : ""} ${selectedPort === port.index ? "selected" : ""}`}
               key={port.index}
               onClick={() => onSelect(port.index)}
               style={portStyle}
-              title={`${port.name}: ${port.operStatus}`}
+              title={`${port.name}: ${port.operStatus}${rate ? `, ${formatRate(rate.totalBytesPerSecond)} total` : ""}, ${formatLineRate(port.maxSpeedMbps)} line max`}
               type="button"
             >
               <span className="port-led" />
@@ -372,12 +426,14 @@ function PortMap({
 function Dashboard({
   system,
   ports,
+  portRates,
   vlans,
   neighbors,
   onRunPreset
 }: {
   system?: SystemInfo;
   ports: SwitchPort[];
+  portRates: PortRateMap;
   vlans: VlanInfo[];
   neighbors: SwitchNeighbor[];
   onRunPreset: (commands: string[]) => Promise<void>;
@@ -385,10 +441,12 @@ function Dashboard({
   const upPorts = ports.filter((port) => port.operStatus === "up").length;
   const issuePorts = ports.filter(hasPortIssues).length;
   const services = system?.managementPorts ?? [];
+  const totalRate = sumPortRates(ports, portRates);
 
   return (
     <div className="content-grid">
       <InfoPanel icon={Activity} label="Reachability" value={`${services.filter((service) => service.open).length}/${services.length || 4}`} detail="management services open" />
+      <InfoPanel icon={Eye} label="Throughput" value={formatRate(totalRate.totalBytesPerSecond)} detail="aggregate sampled rate" />
       <InfoPanel icon={Cable} label="Ports" value={`${upPorts}/${ports.length || 24}`} detail="operationally up" />
       <InfoPanel icon={Network} label="VLANs" value={String(vlans.length)} detail={vlans.length ? "reported by SNMP" : "run CLI preset"} />
       <InfoPanel icon={GitBranch} label="Neighbors" value={String(neighbors.length)} detail={neighbors.length ? "LLDP entries" : "none advertised"} />
@@ -461,10 +519,12 @@ function InfoPanel({
 
 function PortsView({
   ports,
+  portRates,
   selectedPort,
   onSelect
 }: {
   ports: SwitchPort[];
+  portRates: PortRateMap;
   selectedPort?: SwitchPort;
   onSelect: (index: number) => void;
 }) {
@@ -528,6 +588,9 @@ function PortsView({
               <th>Admin</th>
               <th>Link</th>
               <th>Speed</th>
+              <th>Max</th>
+              <th>In Rate</th>
+              <th>Out Rate</th>
               <th>Errors</th>
               <th>Discards</th>
             </tr>
@@ -544,6 +607,9 @@ function PortsView({
                   <StateBadge status={port.operStatus} />
                 </td>
                 <td>{port.speedMbps ? `${port.speedMbps} Mbps` : "Unknown"}</td>
+                <td>{formatLineRate(port.maxSpeedMbps)}</td>
+                <td>{formatRate(portRates[port.index]?.inBytesPerSecond)}</td>
+                <td>{formatRate(portRates[port.index]?.outBytesPerSecond)}</td>
                 <td>{formatNumber((port.inErrors ?? 0) + (port.outErrors ?? 0))}</td>
                 <td>{formatNumber((port.inDiscards ?? 0) + (port.outDiscards ?? 0))}</td>
               </tr>
@@ -580,6 +646,26 @@ function PortsView({
             <div>
               <dt>MAC</dt>
               <dd>{selectedPort.macAddress || "None"}</dd>
+            </div>
+            <div>
+              <dt>Line Max</dt>
+              <dd>{formatLineRate(selectedPort.maxSpeedMbps)}</dd>
+            </div>
+            <div>
+              <dt>Duplex Max</dt>
+              <dd>{formatDuplexRate(selectedPort.maxSpeedMbps)}</dd>
+            </div>
+            <div>
+              <dt>In Rate</dt>
+              <dd>{formatRate(portRates[selectedPort.index]?.inBytesPerSecond)}</dd>
+            </div>
+            <div>
+              <dt>Out Rate</dt>
+              <dd>{formatRate(portRates[selectedPort.index]?.outBytesPerSecond)}</dd>
+            </div>
+            <div>
+              <dt>Utilization</dt>
+              <dd>{formatPercent(portRates[selectedPort.index]?.utilizationPercent)}</dd>
             </div>
             <div>
               <dt>In Octets</dt>

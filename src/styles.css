@@ -381,6 +381,12 @@ textarea {
   border-color: var(--amber);
 }
 
+.port-jack.active-rate {
+  box-shadow:
+    inset 0 -8px 0 rgba(53, 208, 127, 0.13),
+    0 0 18px rgba(53, 208, 127, 0.18);
+}
+
 .sfp-block {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -605,6 +611,306 @@ textarea {
   gap: 16px;
 }
 
+.traffic-console {
+  display: grid;
+  grid-template-columns: 300px minmax(430px, 1fr) 360px;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.traffic-panel,
+.traffic-map-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(26, 39, 54, 0.06);
+}
+
+.traffic-panel {
+  padding: 16px;
+  min-width: 0;
+}
+
+.traffic-left,
+.traffic-right {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.traffic-total {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.traffic-total > div,
+.traffic-summary-list > div {
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  border-radius: 8px;
+  padding: 11px;
+}
+
+.traffic-total span,
+.traffic-summary-list span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.traffic-total strong,
+.traffic-summary-list strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+
+.traffic-port-list {
+  display: grid;
+  gap: 7px;
+}
+
+.traffic-port-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+}
+
+.traffic-port-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: #202933;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.traffic-port-row.down .traffic-port-index {
+  background: #596575;
+}
+
+.traffic-port-meter {
+  height: 12px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, #2fd27f, #42a5ff 62%, #d96cf3) 0 / var(--traffic-level) 100% no-repeat,
+    #e6ecf2;
+  overflow: hidden;
+}
+
+.traffic-port-rate {
+  color: #273747;
+  text-align: right;
+}
+
+.traffic-port-rate strong,
+.traffic-port-rate em {
+  display: block;
+}
+
+.traffic-port-rate strong {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.traffic-port-rate em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.traffic-map-panel {
+  position: relative;
+  min-height: 540px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(10, 40, 67, 0.92), rgba(13, 58, 78, 0.92)),
+    #0f2d41;
+}
+
+.traffic-map-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 72%);
+}
+
+.traffic-map-panel::before {
+  content: "";
+  position: absolute;
+  inset: 34px;
+  border: 1px solid rgba(172, 226, 255, 0.22);
+  border-radius: 50%;
+}
+
+.traffic-map-panel::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 68%;
+  aspect-ratio: 1;
+  border: 1px dashed rgba(172, 226, 255, 0.18);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.flow-beam,
+.flow-node,
+.traffic-switch-core,
+.traffic-map-footer {
+  position: absolute;
+  z-index: 1;
+}
+
+.flow-group {
+  display: contents;
+}
+
+.flow-beam {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(76, 226, 142, 0.1), rgba(76, 226, 142, 0.9), rgba(92, 173, 255, 0.45));
+  transform-origin: 0 50%;
+  box-shadow: 0 0 14px rgba(76, 226, 142, 0.28);
+}
+
+.flow-node {
+  translate: -50% -50%;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-width: 74px;
+  color: #e9f8ff;
+  text-align: center;
+}
+
+.flow-node strong {
+  width: 42px;
+  height: 42px;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(35, 48, 60, 0.94);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+}
+
+.flow-node span {
+  border-radius: 999px;
+  background: rgba(7, 19, 28, 0.72);
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.traffic-switch-core {
+  left: 50%;
+  top: 50%;
+  width: 122px;
+  height: 122px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  color: #f7fbff;
+  background: rgba(10, 24, 36, 0.86);
+  box-shadow:
+    0 0 0 10px rgba(86, 187, 255, 0.08),
+    0 18px 44px rgba(0, 0, 0, 0.33);
+  transform: translate(-50%, -50%);
+}
+
+.traffic-switch-core strong,
+.traffic-switch-core span {
+  display: block;
+}
+
+.traffic-switch-core strong {
+  font-size: 14px;
+}
+
+.traffic-switch-core span {
+  color: #aee8ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.traffic-map-footer {
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.traffic-map-footer span {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: #eaf8ff;
+  background: rgba(8, 23, 34, 0.7);
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.traffic-summary-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mac-table-wrap {
+  max-height: 286px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.compact-table th,
+.compact-table td {
+  padding: 8px;
+  font-size: 12px;
+}
+
+.traffic-empty {
+  color: var(--muted);
+  padding: 16px;
+  text-align: center;
+}
+
+.inspection-boundary {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #f0d39f;
+  border-radius: 8px;
+  background: #fff8eb;
+  padding: 12px;
+}
+
+.inspection-boundary strong {
+  color: #6c4300;
+}
+
+.inspection-boundary span {
+  color: #6d5a38;
+  font-size: 13px;
+}
+
 .table-panel,
 .detail-panel,
 .console-panel,
@@ -761,7 +1067,8 @@ pre {
 @media (max-width: 860px) {
   .app-shell,
   .split-layout,
-  .console-layout {
+  .console-layout,
+  .traffic-console {
     grid-template-columns: 1fr;
   }
 
@@ -770,7 +1077,7 @@ pre {
   }
 
   .nav-list {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   }
 
   .nav-item {

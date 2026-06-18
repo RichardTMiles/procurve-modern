@@ -8,7 +8,9 @@ The first target is an HP ProCurve 2810-24G on `192.168.1.193`, but the service 
 
 - Shows switch identity, uptime, management service reachability, and HTTP title.
 - Renders a front-panel port map in physical odd/even ProCurve order with live SNMP status when SNMP is configured.
+- Shows a Traffic view with sampled per-port transfer rates, max line capacity, utilization, and a visual flow board.
 - Lists interface counters, errors, discards, MAC addresses, and physical-only filters from standard IF-MIB data.
+- Lists learned MAC addresses and their switch ports from BRIDGE-MIB forwarding data where available.
 - Shows VLAN names, status, and egress/tagged/untagged port membership bitmaps where the switch exposes them.
 - Shows LLDP remote-device rows when LLDP data is enabled and exposed through SNMP.
 - Runs read commands over SSH or Telnet with credentials supplied per browser session.
@@ -18,6 +20,8 @@ The first target is an HP ProCurve 2810-24G on `192.168.1.193`, but the service 
 ## What It Is Not
 
 This does not patch or replace switch firmware. It is an internal management facade that talks to the switch through supported protocols and presents a modern UI.
+
+It also does not silently capture packet payloads. Packet capture requires an intentional mirror destination and a capture host or pod connected to that mirrored traffic.
 
 ## Local Development
 

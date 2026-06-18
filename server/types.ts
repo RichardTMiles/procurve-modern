@@ -39,6 +39,7 @@ export type SwitchPort = {
   adminStatus: PortStatus;
   operStatus: PortStatus;
   speedMbps?: number;
+  maxSpeedMbps?: number;
   macAddress?: string;
   inOctets?: number;
   outOctets?: number;
@@ -67,6 +68,14 @@ export type SwitchNeighbor = {
   portDescription?: string;
   chassisId?: string;
   systemDescription?: string;
+};
+
+export type SwitchMacEntry = {
+  macAddress: string;
+  portIndex?: number;
+  portName?: string;
+  bridgePort?: number;
+  status?: string;
 };
 
 export type CliTransport = "ssh" | "telnet";
