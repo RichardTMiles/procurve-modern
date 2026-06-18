@@ -1,4 +1,4 @@
-import { Activity, Eye, Search, Server, TerminalSquare } from "lucide-react";
+import { Activity, Search, Server, TerminalSquare } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import { formatDuplexRate, formatLineRate, formatPercent, formatRate, sumPortRates, type PortRateMap } from "./traffic";
@@ -10,21 +10,6 @@ type TrafficViewProps = {
   macEntries: SwitchMacEntry[];
   onRunPreset: (commands: string[]) => Promise<void>;
 };
-
-const FLOW_POSITIONS = [
-  { left: 78, top: 20, angle: -28 },
-  { left: 83, top: 44, angle: -4 },
-  { left: 70, top: 72, angle: 34 },
-  { left: 50, top: 82, angle: 88 },
-  { left: 28, top: 70, angle: 146 },
-  { left: 18, top: 43, angle: 184 },
-  { left: 31, top: 20, angle: 220 },
-  { left: 63, top: 18, angle: 292 },
-  { left: 88, top: 63, angle: 18 },
-  { left: 12, top: 61, angle: 164 },
-  { left: 44, top: 14, angle: 250 },
-  { left: 58, top: 88, angle: 72 }
-];
 
 export function TrafficView({ ports, portRates, macEntries, onRunPreset }: TrafficViewProps) {
   const [macQuery, setMacQuery] = useState("");
@@ -43,7 +28,12 @@ export function TrafficView({ ports, portRates, macEntries, onRunPreset }: Traff
     [macCountByPort, portRates, ports]
   );
   const maxRate = Math.max(...trafficRows.map((row) => row.rate?.totalBytesPerSecond ?? 0), 1);
-  const activeRows = trafficRows.filter((row) => (row.rate?.totalBytesPerSecond ?? 0) > 0).slice(0, 12);
+  const physicalPortRows = useMemo(() => buildPhysicalPortRows(ports), [ports]);
+  const laneRows = trafficRows.filter((row) => row.port.operStatus === "up" || (row.rate?.totalBytesPerSecond ?? 0) > 0 || row.macCount > 0).slice(0, 8);
+  const activePortCount = ports.filter((port) => port.operStatus === "up").length;
+  const activeCapacityMbps = ports.reduce((total, port) => (port.operStatus === "up" ? total + (port.maxSpeedMbps ?? port.speedMbps ?? 0) : total), 0);
+  const peakUtilization = Math.max(...trafficRows.map((row) => row.rate?.utilizationPercent ?? 0), 0);
+  const peakRow = trafficRows[0];
   const filteredMacs = learnedMacEntries
     .filter((entry) => `${entry.macAddress} ${entry.portName ?? ""} ${entry.portIndex ?? ""} ${entry.status ?? ""}`.toLowerCase().includes(macQuery.toLowerCase()))
     .slice(0, 80);
@@ -91,41 +81,117 @@ export function TrafficView({ ports, portRates, macEntries, onRunPreset }: Traff
         </div>
       </section>
 
-      <section className="traffic-map-panel">
-        <div className="traffic-map-grid" />
-        {activeRows.map((row, index) => {
-          const position = FLOW_POSITIONS[index % FLOW_POSITIONS.length] ?? FLOW_POSITIONS[0];
-          const strength = Math.max(Math.min((row.rate?.totalBytesPerSecond ?? 0) / maxRate, 1), 0.08);
-          return (
-            <div className="flow-group" key={row.port.index}>
-              <span
-                className="flow-beam"
+      <section className="traffic-fabric-panel">
+        <div className="fabric-header">
+          <div>
+            <span className="eyebrow">Switch Fabric</span>
+            <h2>Port Traffic Board</h2>
+            <p>Physical order, line capacity, sampled rates, and learned-device density.</p>
+          </div>
+          <div className="fabric-stat-strip">
+            <div>
+              <span>Total</span>
+              <strong>{formatRate(totalRate.totalBytesPerSecond)}</strong>
+            </div>
+            <div>
+              <span>Active</span>
+              <strong>{activePortCount}/24</strong>
+            </div>
+            <div>
+              <span>Capacity</span>
+              <strong>{formatLineRate(activeCapacityMbps)}</strong>
+            </div>
+            <div>
+              <span>Peak</span>
+              <strong>{peakRow ? `${peakRow.port.index} / ${formatPercent(peakUtilization)}` : "-"}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="fabric-port-grid">
+          {physicalPortRows.map((row, rowIndex) => (
+            <div className="fabric-port-row" key={rowIndex === 0 ? "odd" : "even"}>
+              {row.map((port) => {
+                const rate = portRates[port.index];
+                const totalBytesPerSecond = rate?.totalBytesPerSecond ?? 0;
+                const capacityBytes = capacityBytesPerSecond(port);
+                const heatLevel = Math.max((totalBytesPerSecond / maxRate) * 100, totalBytesPerSecond > 0 ? 5 : 0);
+                const inLevel = capacityBytes ? Math.min(((rate?.inBytesPerSecond ?? 0) / capacityBytes) * 100, 100) : 0;
+                const outLevel = capacityBytes ? Math.min(((rate?.outBytesPerSecond ?? 0) / capacityBytes) * 100, 100) : 0;
+                const macCount = macCountByPort.get(port.index) ?? 0;
+
+                return (
+                  <div
+                    className={`fabric-port-tile ${port.operStatus} ${totalBytesPerSecond > 0 ? "active" : ""}`}
+                    key={port.index}
+                    style={
+                      {
+                        "--heat-level": `${Math.min(heatLevel, 100)}%`,
+                        "--in-level": `${Math.max(inLevel, totalBytesPerSecond > 0 ? 2 : 0)}%`,
+                        "--out-level": `${Math.max(outLevel, totalBytesPerSecond > 0 ? 2 : 0)}%`
+                      } as CSSProperties
+                    }
+                    title={`${port.name}: ${formatRate(totalBytesPerSecond)}, ${formatLineRate(port.maxSpeedMbps ?? port.speedMbps)} max, ${formatMacCount(macCount)}`}
+                  >
+                    <span className="fabric-port-fill" />
+                    <span className="fabric-port-topline">
+                      <strong>{port.index}</strong>
+                      <em>{formatCompactStatus(port.operStatus)}</em>
+                    </span>
+                    <span className="fabric-port-rate">{formatRate(totalBytesPerSecond)}</span>
+                    <span className="fabric-port-max">{formatLineRate(port.maxSpeedMbps ?? port.speedMbps)} max</span>
+                    <span className="fabric-port-mini-bars">
+                      <i className="fabric-port-in" />
+                      <i className="fabric-port-out" />
+                    </span>
+                    <span className="fabric-port-macs">{formatMacCount(macCount)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
+        <div className="fabric-lanes">
+          <div className="fabric-lanes-heading">
+            <strong>Top Talkers</strong>
+            <span>Directional load compared with each port line rate.</span>
+          </div>
+          {laneRows.map((row) => {
+            const capacityBytes = capacityBytesPerSecond(row.port);
+            const inLevel = capacityBytes ? Math.min(((row.rate?.inBytesPerSecond ?? 0) / capacityBytes) * 100, 100) : 0;
+            const outLevel = capacityBytes ? Math.min(((row.rate?.outBytesPerSecond ?? 0) / capacityBytes) * 100, 100) : 0;
+
+            return (
+              <div
+                className={`fabric-lane ${row.port.operStatus}`}
+                key={row.port.index}
                 style={
                   {
-                    left: "50%",
-                    top: "50%",
-                    opacity: 0.24 + strength * 0.58,
-                    transform: `rotate(${position.angle}deg)`,
-                    width: `${22 + strength * 36}%`
+                    "--in-level": `${Math.max(inLevel, (row.rate?.inBytesPerSecond ?? 0) > 0 ? 2 : 0)}%`,
+                    "--out-level": `${Math.max(outLevel, (row.rate?.outBytesPerSecond ?? 0) > 0 ? 2 : 0)}%`
                   } as CSSProperties
                 }
-              />
-              <span className="flow-node" style={{ left: `${position.left}%`, top: `${position.top}%` }}>
-                <strong>{row.port.index}</strong>
-                <span>{formatRate(row.rate?.totalBytesPerSecond)}</span>
-              </span>
-            </div>
-          );
-        })}
-        <div className="traffic-switch-core">
-          <Eye size={26} />
-          <strong>2810-24G</strong>
-          <span>{formatRate(totalRate.totalBytesPerSecond)}</span>
-        </div>
-        <div className="traffic-map-footer">
-          <span>{activeRows.length} active ports</span>
-          <span>{learnedMacEntries.length} learned MACs</span>
-          <span>{formatPercent(Math.max(...trafficRows.map((row) => row.rate?.utilizationPercent ?? 0), 0))} peak link</span>
+              >
+                <span className="fabric-lane-port">
+                  <strong>{row.port.index}</strong>
+                  <em>{formatMacCount(row.macCount)}</em>
+                </span>
+                <span className="fabric-lane-body">
+                  <span className="fabric-lane-meta">
+                    <strong>{row.port.name}</strong>
+                    <em>{formatLineRate(row.port.maxSpeedMbps ?? row.port.speedMbps)} max</em>
+                  </span>
+                  <span className="fabric-lane-bar in" />
+                  <span className="fabric-lane-bar out" />
+                </span>
+                <span className="fabric-lane-rate">
+                  <strong>{formatRate(row.rate?.totalBytesPerSecond)}</strong>
+                  <em>{formatPercent(row.rate?.utilizationPercent)}</em>
+                </span>
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -205,4 +271,34 @@ function countMacsByPort(entries: SwitchMacEntry[]) {
   }
 
   return counts;
+}
+
+function buildPhysicalPortRows(ports: SwitchPort[]) {
+  const sortedPorts = [...ports].sort((a, b) => a.index - b.index);
+  return [sortedPorts.filter((port) => port.index % 2 === 1), sortedPorts.filter((port) => port.index % 2 === 0)];
+}
+
+function capacityBytesPerSecond(port: SwitchPort) {
+  const speedMbps = port.maxSpeedMbps ?? port.speedMbps;
+  return speedMbps == null ? undefined : (speedMbps * 1_000_000) / 8;
+}
+
+function formatMacCount(count: number) {
+  return count === 1 ? "1 MAC" : `${count} MACs`;
+}
+
+function formatCompactStatus(status: SwitchPort["operStatus"]) {
+  if (status === "down") {
+    return "dn";
+  }
+
+  if (status === "testing") {
+    return "test";
+  }
+
+  if (status === "unknown") {
+    return "unk";
+  }
+
+  return status;
 }

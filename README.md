@@ -60,14 +60,21 @@ docker buildx build --platform linux/amd64 -t ghcr.io/richardtmiles/procurve-mod
 ## Kubernetes
 
 The checked-in manifests deploy a single pod and expose it internally through NodePort `30093`.
-They also define nginx ingress for `procurve.miles.systems` with TLS from cert-manager and a private-network source allowlist.
+They also define nginx ingress for `procurve.miles.systems` with TLS from cert-manager. Private/LAN source ranges can open the app without a prompt; other source ranges must pass nginx Basic Auth through the `procurve-modern-basic-auth` secret.
 
 ```sh
 kubectl apply -k k8s
 ```
 
 Preferred DNS is private or split-horizon: point `procurve.miles.systems` at the cluster ingress LAN IPs, currently `192.168.1.100`, `192.168.1.101`, and `192.168.1.102`.
-If you intentionally want to use the existing public edge path, mirror the current `media.miles.systems` / `stats.coach` A record target (`204.57.21.205`); the ingress includes a private-network source allowlist.
+If you intentionally want to use the existing public edge path, mirror the current `media.miles.systems` / `stats.coach` A record target (`204.57.21.205`); external clients will see Basic Auth before the app.
+
+Create the Basic Auth secret from an `htpasswd` line. Do not commit the real password.
+
+```sh
+kubectl -n procurve-modern create secret generic procurve-modern-basic-auth \
+  --from-literal=auth='rtm:$2y$05$replace-with-htpasswd-output'
+```
 
 Optional SNMP secret:
 
@@ -87,7 +94,7 @@ ALLOW_WRITE_COMMANDS=false
 - Telnet sends credentials in clear text. Prefer SSH after upgrading/enabling it on the switch.
 - Browser-entered CLI credentials are not persisted by this app.
 - Write commands are blocked server-side unless explicitly enabled.
-- Run this only on a trusted management LAN or behind your own authentication layer.
+- Keep public ingress behind nginx Basic Auth or stronger identity-aware auth. LAN/private clients can bypass auth only because ingress uses `satisfy any` with private source ranges.
 - Take a config backup before enabling write commands.
 
 ## CLI Presets
