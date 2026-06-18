@@ -60,10 +60,14 @@ docker buildx build --platform linux/amd64 -t ghcr.io/richardtmiles/procurve-mod
 ## Kubernetes
 
 The checked-in manifests deploy a single pod and expose it internally through NodePort `30093`.
+They also define nginx ingress for `procurve.miles.systems` with TLS from cert-manager and a private-network source allowlist.
 
 ```sh
 kubectl apply -k k8s
 ```
+
+Preferred DNS is private or split-horizon: point `procurve.miles.systems` at the cluster ingress LAN IPs, currently `192.168.1.100`, `192.168.1.101`, and `192.168.1.102`.
+If you intentionally want to use the existing public edge path, mirror the current `media.miles.systems` / `stats.coach` A record target (`204.57.21.205`); the ingress includes a private-network source allowlist.
 
 Optional SNMP secret:
 
