@@ -331,14 +331,14 @@ textarea {
 .port-grid {
   display: grid;
   grid-template-columns: repeat(var(--port-columns, 12), minmax(52px, 1fr));
-  grid-template-rows: repeat(2, minmax(74px, auto));
+  grid-template-rows: repeat(2, minmax(88px, auto));
   gap: 8px;
   min-width: 640px;
 }
 
 .port-jack {
   position: relative;
-  min-height: 74px;
+  min-height: 88px;
   background: #202933;
   border: 2px solid #0f151b;
   color: #ffffff;
@@ -395,6 +395,41 @@ textarea {
   line-height: 1;
 }
 
+.port-host-label {
+  max-width: 100%;
+  min-height: 13px;
+  overflow: hidden;
+  border-radius: 999px;
+  color: #e7f4ff;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 4px;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-host-label.distributed {
+  color: #ffe4a3;
+  background: rgba(240, 161, 26, 0.18);
+}
+
+.port-host-label.lldp {
+  color: #aee8ff;
+  background: rgba(54, 199, 255, 0.15);
+}
+
+.port-host-label.direct {
+  color: #bdffd8;
+  background: rgba(47, 210, 127, 0.12);
+}
+
+.port-host-label.empty {
+  color: #9cadbd;
+  background: transparent;
+}
+
 .port-speed-stack {
   display: grid;
   gap: 1px;
@@ -425,7 +460,7 @@ textarea {
 .port-speed-detail {
   grid-column: 2 / -1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   align-items: stretch;
   border: 1px solid #c9d7e4;

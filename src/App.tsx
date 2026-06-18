@@ -134,6 +134,7 @@ export function App() {
   const refreshPortRows = useCallback(async () => {
     try {
       applyPortRows(await fetchPorts());
+      setError(undefined);
       setLastUpdated(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to refresh port counters");
@@ -316,7 +317,7 @@ export function App() {
               <span>{openServices.length} services</span>
             </div>
           </div>
-          <PortMap ports={physicalPorts} portRates={portRates} selectedPort={selectedPortRow?.index} onSelect={setSelectedPort} />
+          <PortMap macEntries={macEntries} neighbors={neighbors} ports={physicalPorts} portRates={portRates} selectedPort={selectedPortRow?.index} onSelect={setSelectedPort} />
         </section>
 
         {view === "dashboard" ? (
@@ -325,7 +326,7 @@ export function App() {
         {view === "traffic" ? (
           <TrafficView macEntries={macEntries} ports={physicalPorts} portRates={portRates} onRunPreset={runPreset} />
         ) : null}
-        {view === "ports" ? <PortsView ports={ports} portRates={portRates} selectedPort={selectedPortRow} onSelect={setSelectedPort} /> : null}
+        {view === "ports" ? <PortsView macEntries={macEntries} neighbors={neighbors} ports={ports} portRates={portRates} selectedPort={selectedPortRow} onSelect={setSelectedPort} /> : null}
         {view === "vlans" ? <VlansView vlans={vlans} /> : null}
         {view === "neighbors" ? <NeighborsView neighbors={neighbors} onRunPreset={runPreset} /> : null}
         {view === "config" ? <ConfigView loading={loading} result={result} onBackup={runBackup} onRunPreset={runPreset} /> : null}
@@ -393,12 +394,103 @@ function formatCompactNumber(value: number) {
   return value >= 10 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
 }
 
+type PortHostContext = {
+  macsByPort: Map<number, SwitchMacEntry[]>;
+  neighborsByPort: Map<number, SwitchNeighbor[]>;
+};
+
+function buildPortHostContext(macEntries: SwitchMacEntry[], neighbors: SwitchNeighbor[]): PortHostContext {
+  const macsByPort = new Map<number, SwitchMacEntry[]>();
+  const seenMacsByPort = new Map<number, Set<string>>();
+
+  for (const entry of macEntries) {
+    if (entry.portIndex == null || entry.status === "self") {
+      continue;
+    }
+
+    const normalizedMac = entry.macAddress.toLowerCase();
+    const seenMacs = seenMacsByPort.get(entry.portIndex) ?? new Set<string>();
+    if (seenMacs.has(normalizedMac)) {
+      continue;
+    }
+
+    seenMacs.add(normalizedMac);
+    seenMacsByPort.set(entry.portIndex, seenMacs);
+    macsByPort.set(entry.portIndex, [...(macsByPort.get(entry.portIndex) ?? []), entry]);
+  }
+
+  const neighborsByPort = new Map<number, SwitchNeighbor[]>();
+  for (const neighbor of neighbors) {
+    if (neighbor.localPort == null) {
+      continue;
+    }
+
+    neighborsByPort.set(neighbor.localPort, [...(neighborsByPort.get(neighbor.localPort) ?? []), neighbor]);
+  }
+
+  return { macsByPort, neighborsByPort };
+}
+
+function hostSummaryForPort(port: SwitchPort, context: PortHostContext) {
+  const macs = context.macsByPort.get(port.index) ?? [];
+  const neighbors = context.neighborsByPort.get(port.index) ?? [];
+  const neighbor = neighbors.find((entry) => entry.systemName || entry.portDescription || entry.chassisId);
+  const neighborName = neighbor ? neighbor.systemName || neighbor.portDescription || neighbor.chassisId : undefined;
+  const macSamples = macs.slice(0, 3).map((entry) => entry.macAddress);
+  const macCount = macs.length;
+  const isDistributed = macCount > 1;
+  const label = neighborName
+    ? compactHostLabel(neighborName)
+    : isDistributed
+      ? `${macCount} hosts`
+      : macCount === 1
+        ? shortMac(macs[0]?.macAddress)
+        : port.operStatus === "up"
+          ? "No MAC"
+          : "Empty";
+  const detail = [
+    neighborName ? `LLDP: ${neighborName}` : undefined,
+    isDistributed ? `Distributed segment with ${macCount} learned MACs` : macCount === 1 ? `Direct learned MAC ${macs[0]?.macAddress}` : undefined,
+    macSamples.length > 0 ? `MACs: ${macSamples.join(", ")}${macCount > macSamples.length ? ` +${macCount - macSamples.length}` : ""}` : undefined,
+    neighbor?.portId ? `Remote port: ${neighbor.portId}` : undefined,
+    !neighborName && macCount > 0 ? "No LLDP hostname advertised" : undefined,
+    macCount === 0 && port.operStatus === "up" ? "Link is up but no downstream MAC has been learned yet" : undefined
+  ].filter(Boolean);
+
+  return {
+    detail: detail.join(". ") || "No host seen on this port.",
+    isDistributed,
+    label,
+    macCount,
+    neighborName,
+    tone: neighborName ? "lldp" : isDistributed ? "distributed" : macCount === 1 ? "direct" : "empty"
+  };
+}
+
+function compactHostLabel(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length > 13 ? `${trimmed.slice(0, 12)}...` : trimmed;
+}
+
+function shortMac(value: string | undefined) {
+  if (!value) {
+    return "MAC";
+  }
+
+  const parts = value.split(":");
+  return parts.length >= 3 ? parts.slice(-3).join(":") : value;
+}
+
 function PortMap({
+  macEntries,
+  neighbors,
   ports,
   portRates,
   selectedPort,
   onSelect
 }: {
+  macEntries: SwitchMacEntry[];
+  neighbors: SwitchNeighbor[];
   ports: SwitchPort[];
   portRates: PortRateMap;
   selectedPort?: number;
@@ -417,8 +509,10 @@ function PortMap({
         }));
   const gridColumns = Math.max(12, Math.ceil(Math.max(...visiblePorts.map((port) => port.index)) / 2));
   const gridStyle: CSSProperties & { "--port-columns": string } = { "--port-columns": String(gridColumns) };
+  const hostContext = useMemo(() => buildPortHostContext(macEntries, neighbors), [macEntries, neighbors]);
   const selectedPortRow = visiblePorts.find((port) => port.index === selectedPort) ?? visiblePorts[0];
   const selectedSpeedProfile = speedProfileForPort(selectedPortRow);
+  const selectedHostSummary = hostSummaryForPort(selectedPortRow, hostContext);
 
   return (
     <div className="front-panel">
@@ -432,6 +526,7 @@ function PortMap({
         {visiblePorts.map((port) => {
           const rate = portRates[port.index];
           const speedProfile = speedProfileForPort(port);
+          const hostSummary = hostSummaryForPort(port, hostContext);
           const portStyle: CSSProperties = {
             gridColumn: Math.ceil(port.index / 2),
             gridRow: port.index % 2 === 1 ? 1 : 2
@@ -443,11 +538,12 @@ function PortMap({
               key={port.index}
               onClick={() => onSelect(port.index)}
               style={portStyle}
-              title={`${port.name}: ${port.operStatus}${rate ? `, ${formatRate(rate.totalBytesPerSecond)} total` : ""}. Device max ${speedProfile.deviceLabel}. Cord ${speedProfile.cableLabel}. Negotiated ${speedProfile.negotiatedLabel}.`}
+              title={`${port.name}: ${port.operStatus}${rate ? `, ${formatRate(rate.totalBytesPerSecond)} total` : ""}. Host ${hostSummary.detail}. Device max ${speedProfile.deviceLabel}. Cord ${speedProfile.cableLabel}. Negotiated ${speedProfile.negotiatedLabel}.`}
               type="button"
             >
               <span className="port-led" />
               <span className="port-number">{port.index}</span>
+              <span className={`port-host-label ${hostSummary.tone}`}>{hostSummary.label}</span>
               <span className="port-speed-stack" aria-hidden="true">
                 <span>
                   <b>D</b>
@@ -480,6 +576,10 @@ function PortMap({
             <strong>Port {selectedPortRow.index}</strong>
           </div>
           <div>
+            <span>Host</span>
+            <strong>{selectedHostSummary.label}</strong>
+          </div>
+          <div>
             <span>Device max</span>
             <strong>{selectedSpeedProfile.deviceLabel}</strong>
           </div>
@@ -491,6 +591,7 @@ function PortMap({
             <span>Negotiated</span>
             <strong>{selectedSpeedProfile.negotiatedLabel}</strong>
           </div>
+          <p>{selectedHostSummary.detail}</p>
           <p>{selectedSpeedProfile.note}</p>
         </div>
       ) : null}
@@ -593,11 +694,15 @@ function InfoPanel({
 }
 
 function PortsView({
+  macEntries,
+  neighbors,
   ports,
   portRates,
   selectedPort,
   onSelect
 }: {
+  macEntries: SwitchMacEntry[];
+  neighbors: SwitchNeighbor[];
   ports: SwitchPort[];
   portRates: PortRateMap;
   selectedPort?: SwitchPort;
@@ -607,6 +712,8 @@ function PortsView({
   const [statusFilter, setStatusFilter] = useState<"all" | "up" | "down" | "issues">("all");
   const [physicalOnly, setPhysicalOnly] = useState(true);
   const selectedSpeedProfile = selectedPort ? speedProfileForPort(selectedPort) : undefined;
+  const hostContext = useMemo(() => buildPortHostContext(macEntries, neighbors), [macEntries, neighbors]);
+  const selectedHostSummary = selectedPort ? hostSummaryForPort(selectedPort, hostContext) : undefined;
   const filteredPorts = ports.filter((port) => {
     if (physicalOnly && !isPhysicalPort(port)) {
       return false;
@@ -661,6 +768,7 @@ function PortsView({
             <tr>
               <th>Port</th>
               <th>Name</th>
+              <th>Host</th>
               <th>Admin</th>
               <th>Link</th>
               <th>Speed</th>
@@ -672,24 +780,29 @@ function PortsView({
             </tr>
           </thead>
           <tbody>
-            {filteredPorts.map((port) => (
-              <tr className={selectedPort?.index === port.index ? "selected-row" : ""} key={port.index} onClick={() => onSelect(port.index)}>
-                <td>{port.index}</td>
-                <td>{port.alias || port.name}</td>
-                <td>
-                  <StateBadge status={port.adminStatus} />
-                </td>
-                <td>
-                  <StateBadge status={port.operStatus} />
-                </td>
-                <td>{port.speedMbps ? `${port.speedMbps} Mbps` : "Unknown"}</td>
-                <td>{formatLineRate(port.maxSpeedMbps)}</td>
-                <td>{formatRate(portRates[port.index]?.inBytesPerSecond)}</td>
-                <td>{formatRate(portRates[port.index]?.outBytesPerSecond)}</td>
-                <td>{formatNumber((port.inErrors ?? 0) + (port.outErrors ?? 0))}</td>
-                <td>{formatNumber((port.inDiscards ?? 0) + (port.outDiscards ?? 0))}</td>
-              </tr>
-            ))}
+            {filteredPorts.map((port) => {
+              const hostSummary = hostSummaryForPort(port, hostContext);
+
+              return (
+                <tr className={selectedPort?.index === port.index ? "selected-row" : ""} key={port.index} onClick={() => onSelect(port.index)}>
+                  <td>{port.index}</td>
+                  <td>{port.alias || port.name}</td>
+                  <td title={hostSummary.detail}>{hostSummary.label}</td>
+                  <td>
+                    <StateBadge status={port.adminStatus} />
+                  </td>
+                  <td>
+                    <StateBadge status={port.operStatus} />
+                  </td>
+                  <td>{port.speedMbps ? `${port.speedMbps} Mbps` : "Unknown"}</td>
+                  <td>{formatLineRate(port.maxSpeedMbps)}</td>
+                  <td>{formatRate(portRates[port.index]?.inBytesPerSecond)}</td>
+                  <td>{formatRate(portRates[port.index]?.outBytesPerSecond)}</td>
+                  <td>{formatNumber((port.inErrors ?? 0) + (port.outErrors ?? 0))}</td>
+                  <td>{formatNumber((port.inDiscards ?? 0) + (port.outDiscards ?? 0))}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </section>
@@ -722,6 +835,14 @@ function PortsView({
             <div>
               <dt>MAC</dt>
               <dd>{selectedPort.macAddress || "None"}</dd>
+            </div>
+            <div>
+              <dt>Host</dt>
+              <dd>{selectedHostSummary?.label}</dd>
+            </div>
+            <div>
+              <dt>Host Detail</dt>
+              <dd>{selectedHostSummary?.detail}</dd>
             </div>
             <div>
               <dt>Device Max</dt>
